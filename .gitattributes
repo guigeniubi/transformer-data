@@ -1,0 +1,17 @@
+* text=auto
+
+# Use LF by default in repo; keep Windows-friendly for scripts
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Ensure CSV is treated as text for diffs
+*.csv text
+
+# Normalize common text files
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+

@@ -1,0 +1,19 @@
+{
+  "name": "transformer-data",
+  "version": "1.0.0",
+  "description": "Parse .txt (JSON payload) to CSV for product data",
+  "license": "MIT",
+  "private": true,
+  "bin": "parse_txt_to_csv.js",
+  "main": "parse_txt_to_csv.js",
+  "scripts": {
+    "build:win": "pkg . --targets node18-win-x64 --output dist/transformer-data.exe"
+  },
+  "pkg": {
+    "assets": []
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
+
