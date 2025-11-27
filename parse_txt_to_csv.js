@@ -47,8 +47,19 @@ if ($result -eq 'OK') {
     }
 };
 
-// 提取产品数据的函数
-const extractProductData = (data, storeName = '') => {
+// 检测文件来源（通过文件名前缀）
+const detectSource = (filePath) => {
+    const fileName = path.basename(filePath, '.txt').toLowerCase();
+    if (fileName.startsWith('hcapi')) {
+        return 'meituan';
+    } else if (fileName.startsWith('venus')) {
+        return 'eleme';
+    }
+    return 'unknown';
+};
+
+// 提取美团产品数据
+const extractMeituanProductData = (data, storeName = '') => {
     const rows = [];
 
     // 调试：打印数据结构
@@ -90,6 +101,7 @@ const extractProductData = (data, storeName = '') => {
         const productName = product.name || product.show_name || product.spu_name || '';
         const monthSales = product.month_saled || product.monthly_sales || 0;
         const monthSalesContent = product.month_saled_content || product.monthly_sales_text || String(monthSales);
+        const productImage = product.picture || product.image || product.image_url || product.pic_url || '';
 
         // 获取SKU列表
         const skus = product.skus || product.sku_list || [];
@@ -103,11 +115,13 @@ const extractProductData = (data, storeName = '') => {
                 售价: product.price || product.min_price || product.min_sku_price || '',
                 原价: product.origin_price || product.underline_price || product.original_price || '',
                 活动方式: product.promotion_info || product.activity_tag || product.activity_act_text || product.promotion || '',
-                库存: product.stock || product.real_stock || product.quantity || ''
+                库存: product.stock || product.real_stock || product.quantity || '',
+                图片: productImage
             });
         } else {
             // 遍历每个SKU
             skus.forEach(sku => {
+                const skuImage = sku.picture || sku.image || sku.image_url || sku.pic_url || productImage || '';
                 rows.push({
                     upcode: sku.upccode || sku.upc || '',
                     品种名称: productName,
@@ -120,13 +134,88 @@ const extractProductData = (data, storeName = '') => {
                         product.activity_tag ||
                         product.activity_act_text ||
                         product.promotion || '',
-                    库存: sku.stock || sku.real_stock || sku.quantity || ''
+                    库存: sku.stock || sku.real_stock || sku.quantity || '',
+                    图片: skuImage
                 });
             });
         }
     });
 
     return rows;
+};
+
+// 提取饿了么产品数据
+const extractElemeProductData = (data, storeName = '') => {
+    const rows = [];
+
+    console.log('  数据结构检查（饿了么）:');
+    console.log('    - 顶层keys:', Object.keys(data).slice(0, 5));
+
+    // 饿了么数据结构：data.data[0].foods
+    let foods = [];
+    if (data.data && data.data.data && Array.isArray(data.data.data) && data.data.data.length > 0) {
+        // 遍历所有分类，收集所有foods
+        data.data.data.forEach(category => {
+            if (category.foods && Array.isArray(category.foods)) {
+                foods.push(...category.foods);
+            }
+        });
+    }
+
+    console.log(`    - 找到 ${foods.length} 个产品`);
+
+    // 遍历每个产品
+    foods.forEach(food => {
+        const item = food.item || food;
+        if (!item) return;
+
+        const productName = item.title || item.itemTitle || '';
+        const monthSalesContent = item.monthSellFakeText || item.sellText || item.monthSellFake || item.monthSell || '';
+        
+        // 价格单位是分，需要转换为元
+        const currentPrice = item.currentPrice?.price || item.currentPrice || 0;
+        const originalPrice = item.originalPrice?.price || item.originalPrice || 0;
+        const salePrice = currentPrice ? (currentPrice / 100).toFixed(2) : '';
+        const origPrice = originalPrice ? (originalPrice / 100).toFixed(2) : '';
+
+        // 活动信息
+        const activities = item.itemActivities || [];
+        const activityText = activities.length > 0 
+            ? (activities[0].tagText || activities[0].tagDetailTextShort || activities[0].tagDetailText || '')
+            : (item.itemLimitText || '');
+
+        // 库存
+        const stockModel = item.stockModel || {};
+        const stock = stockModel.leftQuantity !== undefined ? stockModel.leftQuantity : (stockModel.quantity || '');
+
+        // 图片
+        const imageUrl = item.mainPictUrl || (item.imageList && item.imageList[0]) || '';
+
+        // upcode
+        const upcode = item.barcode || '';
+
+        rows.push({
+            upcode: upcode,
+            品种名称: productName,
+            月销量: monthSalesContent,
+            售价: salePrice,
+            原价: origPrice,
+            活动方式: activityText,
+            库存: stock,
+            图片: imageUrl
+        });
+    });
+
+    return rows;
+};
+
+// 提取产品数据的统一入口
+const extractProductData = (data, storeName = '', source = 'meituan') => {
+    if (source === 'eleme') {
+        return extractElemeProductData(data, storeName);
+    } else {
+        return extractMeituanProductData(data, storeName);
+    }
 };
 
 // 读取JSON文件，跳过URL和Request部分
@@ -167,8 +256,8 @@ const readJsonFile = (filePath) => {
 const convertToCSV = (rows) => {
     if (rows.length === 0) return '';
 
-    // CSV头部（移除 店名）
-    const headers = ['upcode', '品种名称', '月销量', '售价', '原价', '活动方式', '库存'];
+    // CSV头部（包含图片列）
+    const headers = ['upcode', '品种名称', '月销量', '售价', '原价', '活动方式', '库存', '图片'];
 
     // 转义CSV字段
     const escapeCSV = (field) => {
@@ -308,6 +397,10 @@ const main = async () => {
     validFiles.forEach((filePath, index) => {
         console.log(`处理文件 ${index + 1}/${validFiles.length}: ${path.basename(filePath)}`);
 
+        // 检测文件来源
+        const source = detectSource(filePath);
+        console.log(`  来源: ${source === 'meituan' ? '美团' : source === 'eleme' ? '饿了么' : '未知'}`);
+
         // 从文件名提取店名（可选）
         const fileName = path.basename(filePath, '.txt');
         const storeName = fileName.split('_')[0] || '';
@@ -319,8 +412,8 @@ const main = async () => {
             return;
         }
 
-        // 提取数据
-        const rows = extractProductData(data, storeName);
+        // 根据来源提取数据
+        const rows = extractProductData(data, storeName, source);
         console.log(`  提取了 ${rows.length} 条记录`);
         allRows.push(...rows);
     });
